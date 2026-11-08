@@ -30,7 +30,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.composer/cache
-          key: composer-${{ hashFiles('composer.json') }}
+          key: composer-${{ hashFiles('composer.lock') }}
           restore-keys: composer-
 
       - name: Instalar dependências
@@ -55,7 +55,7 @@ jobs:
 
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.9.5
+          terraform_version: 1.9.8
 
       - name: terraform fmt
         run: terraform fmt -check -recursive
