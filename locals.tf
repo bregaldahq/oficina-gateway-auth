@@ -5,7 +5,7 @@ locals {
     Project     = "oficina-mecanica"
     Environment = var.environment
     ManagedBy   = "terraform"
-    Repo        = "oficina-lambda-auth"
+    Repo        = "oficina-lambda-auth" # nome antigo de oficina-gateway-auth; mantido para o rename nao gerar diff de tags
   }
 
   auth_function_name       = "${local.name_prefix}-auth-cpf"
