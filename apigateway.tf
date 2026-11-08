@@ -56,7 +56,7 @@ resource "aws_apigatewayv2_integration" "auth_cpf" {
 }
 
 # HTTP_PROXY via VPC Link -> listener :80 do NLB interno, cujo ARN e' publicado
-# no SSM pelo repo `oficina-infra-k8s` (adendo 1). Este repo nao cria load balancer.
+# no SSM pelo repo `oficina-infra-cluster` (adendo 1). Este repo nao cria load balancer.
 resource "aws_apigatewayv2_integration" "app_proxy" {
   api_id             = aws_apigatewayv2_api.this.id
   integration_type   = "HTTP_PROXY"
@@ -136,6 +136,19 @@ resource "aws_apigatewayv2_route" "ready" {
 resource "aws_apigatewayv2_route" "admin_login" {
   api_id             = aws_apigatewayv2_api.this.id
   route_key          = "POST /api/auth/login"
+  target             = "integrations/${aws_apigatewayv2_integration.app_proxy.id}"
+  authorization_type = "NONE"
+}
+
+# Webhook de aprovacao do orcamento, sem authorizer.
+#
+# A aplicacao protege esta rota com o header X-Webhook-Token (secao 5 dos Contratos),
+# nao com JWT: quem chama e' o sistema de aprovacao, que nao tem token. Pelo
+# ANY /api/{proxy+} o gateway responderia 401 antes do authorizer, pela mesma razao das
+# sondas e do login, e o webhook seria inalcancavel de fora.
+resource "aws_apigatewayv2_route" "approval_webhook" {
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "POST /api/service-orders/{id}/approval"
   target             = "integrations/${aws_apigatewayv2_integration.app_proxy.id}"
   authorization_type = "NONE"
 }
