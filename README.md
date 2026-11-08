@@ -1,4 +1,8 @@
-# oficina-lambda-auth
+# oficina-gateway-auth
+
+> Parte do sistema **Oficina Mecânica**. Comece pelo repositório principal, [`oficina-mecanica`](https://github.com/bregaldahq/oficina-mecanica): visão geral, mapa dos repositórios e regras para mudanças entre eles.
+>
+> [`oficina-infra-fundacao`](https://github.com/bregaldahq/oficina-infra-fundacao) → [`oficina-infra-cluster`](https://github.com/bregaldahq/oficina-infra-cluster) → **`oficina-gateway-auth`** → [`oficina-api`](https://github.com/bregaldahq/oficina-api)
 
 Funções serverless de autenticação da **Oficina Mecânica** e o **API Gateway HTTP API**
 que serve de porta de entrada única da plataforma.
@@ -12,7 +16,7 @@ Este repositório é dono de dois recursos de computação e de todo o gateway:
 | API Gateway HTTP API, rotas, VPC Link, authorizer | Roteamento público e integração com o NLB interno do cluster |
 
 Ele **não** cria VPC, subnets, RDS, segredos, cluster nem load balancer. Tudo isso
-pertence a `oficina-infra-database` e `oficina-infra-k8s`, e chega aqui **exclusivamente
+pertence a `oficina-infra-fundacao` e `oficina-infra-cluster`, e chega aqui **exclusivamente
 por SSM Parameter Store** — nunca por `terraform_remote_state`.
 
 ---
@@ -257,9 +261,9 @@ A máquina de desenvolvimento do desafio não tem PHP nem Composer. Use os wrapp
 da raiz do monorepo de trabalho:
 
 ```bash
-./scripts/composer.sh install -d /app/repos/oficina-lambda-auth
-./scripts/php.sh php repos/oficina-lambda-auth/vendor/bin/phpunit -c repos/oficina-lambda-auth/phpunit.xml
-./scripts/php.sh php repos/oficina-lambda-auth/vendor/bin/phpstan analyse -c repos/oficina-lambda-auth/phpstan.neon --no-progress
+./scripts/composer.sh install -d /app/repos/oficina-gateway-auth
+./scripts/php.sh php repos/oficina-gateway-auth/vendor/bin/phpunit -c repos/oficina-gateway-auth/phpunit.xml
+./scripts/php.sh php repos/oficina-gateway-auth/vendor/bin/phpstan analyse -c repos/oficina-gateway-auth/phpstan.neon --no-progress
 ```
 
 Com PHP local disponível, o `Makefile` cobre o mesmo:
@@ -307,5 +311,5 @@ que as diferencia é o `handler` configurado no Terraform. É de propósito: gar
 Autenticação AWS por **OIDC** (`aws-actions/configure-aws-credentials@v4`), sem nenhuma
 access key estática.
 
-Ordem de `apply` entre repositórios: **database → k8s → lambda → app**. Este stack
+Ordem de `apply` entre repositórios: **fundação → cluster → gateway → api**. Este stack
 depende dos parâmetros SSM dos dois primeiros e falha no `plan` se eles não existirem.

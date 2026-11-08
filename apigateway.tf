@@ -56,7 +56,7 @@ resource "aws_apigatewayv2_integration" "auth_cpf" {
 }
 
 # HTTP_PROXY via VPC Link -> listener :80 do NLB interno, cujo ARN e' publicado
-# no SSM pelo repo `oficina-infra-k8s` (adendo 1). Este repo nao cria load balancer.
+# no SSM pelo repo `oficina-infra-cluster` (adendo 1). Este repo nao cria load balancer.
 resource "aws_apigatewayv2_integration" "app_proxy" {
   api_id             = aws_apigatewayv2_api.this.id
   integration_type   = "HTTP_PROXY"
