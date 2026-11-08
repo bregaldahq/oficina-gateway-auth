@@ -140,6 +140,19 @@ resource "aws_apigatewayv2_route" "admin_login" {
   authorization_type = "NONE"
 }
 
+# Webhook de aprovacao do orcamento, sem authorizer.
+#
+# A aplicacao protege esta rota com o header X-Webhook-Token (secao 5 dos Contratos),
+# nao com JWT: quem chama e' o sistema de aprovacao, que nao tem token. Pelo
+# ANY /api/{proxy+} o gateway responderia 401 antes do authorizer, pela mesma razao das
+# sondas e do login, e o webhook seria inalcancavel de fora.
+resource "aws_apigatewayv2_route" "approval_webhook" {
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "POST /api/service-orders/{id}/approval"
+  target             = "integrations/${aws_apigatewayv2_integration.app_proxy.id}"
+  authorization_type = "NONE"
+}
+
 # Documentacao da API, publica. O enunciado exige link do Swagger em cada README,
 # e sem estas rotas ele so' existe dentro do cluster. O nginx da aplicacao ja serve
 # /docs (Swagger UI) e /swagger.yaml (OpenAPI).
