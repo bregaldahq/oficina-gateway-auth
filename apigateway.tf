@@ -28,12 +28,13 @@ resource "aws_security_group" "vpc_link" {
   tags = { Name = "${local.name_prefix}-vpclink-sg" }
 }
 
+# 80 = servico de OS, 81 = Faturamento, 82 = Execucao (docs/fase-4/CONTRATOS.md §4).
 resource "aws_vpc_security_group_egress_rule" "vpc_link_to_vpc" {
   security_group_id = aws_security_group.vpc_link.id
-  description       = "Alcanca o NLB interno na porta 80."
+  description       = "Alcanca o NLB interno nas portas dos tres servicos."
   cidr_ipv4         = nonsensitive(data.aws_ssm_parameter.vpc_cidr.value)
   from_port         = 80
-  to_port           = 80
+  to_port           = 82
   ip_protocol       = "tcp"
 }
 
@@ -62,6 +63,42 @@ resource "aws_apigatewayv2_integration" "app_proxy" {
   integration_type   = "HTTP_PROXY"
   integration_method = "ANY"
   integration_uri    = nonsensitive(data.aws_ssm_parameter.nlb_listener_arn.value)
+
+  connection_type = "VPC_LINK"
+  connection_id   = aws_apigatewayv2_vpc_link.this.id
+
+  payload_format_version = "1.0"
+  timeout_milliseconds   = 29000
+
+  request_parameters = {
+    "overwrite:path" = "$request.path"
+  }
+}
+
+# Fase 4: Faturamento (:81), listener proprio no mesmo NLB.
+resource "aws_apigatewayv2_integration" "billing_proxy" {
+  api_id             = aws_apigatewayv2_api.this.id
+  integration_type   = "HTTP_PROXY"
+  integration_method = "ANY"
+  integration_uri    = nonsensitive(data.aws_ssm_parameter.nlb_service_listener_arn["faturamento"].value)
+
+  connection_type = "VPC_LINK"
+  connection_id   = aws_apigatewayv2_vpc_link.this.id
+
+  payload_format_version = "1.0"
+  timeout_milliseconds   = 29000
+
+  request_parameters = {
+    "overwrite:path" = "$request.path"
+  }
+}
+
+# Fase 4: Execucao (:82), listener proprio no mesmo NLB.
+resource "aws_apigatewayv2_integration" "execution_proxy" {
+  api_id             = aws_apigatewayv2_api.this.id
+  integration_type   = "HTTP_PROXY"
+  integration_method = "ANY"
+  integration_uri    = nonsensitive(data.aws_ssm_parameter.nlb_service_listener_arn["execucao"].value)
 
   connection_type = "VPC_LINK"
   connection_id   = aws_apigatewayv2_vpc_link.this.id
@@ -140,18 +177,8 @@ resource "aws_apigatewayv2_route" "admin_login" {
   authorization_type = "NONE"
 }
 
-# Webhook de aprovacao do orcamento, sem authorizer.
-#
-# A aplicacao protege esta rota com o header X-Webhook-Token (secao 5 dos Contratos),
-# nao com JWT: quem chama e' o sistema de aprovacao, que nao tem token. Pelo
-# ANY /api/{proxy+} o gateway responderia 401 antes do authorizer, pela mesma razao das
-# sondas e do login, e o webhook seria inalcancavel de fora.
-resource "aws_apigatewayv2_route" "approval_webhook" {
-  api_id             = aws_apigatewayv2_api.this.id
-  route_key          = "POST /api/service-orders/{id}/approval"
-  target             = "integrations/${aws_apigatewayv2_integration.app_proxy.id}"
-  authorization_type = "NONE"
-}
+# O webhook de aprovacao do orcamento saiu daqui na Fase 4: agora e' do Faturamento,
+# em POST /api/billing/budgets/{id}/approval (rota dedicada mais abaixo).
 
 # Documentacao da API, publica. O enunciado exige link do Swagger em cada README,
 # e sem estas rotas ele so' existe dentro do cluster. O nginx da aplicacao ja serve
@@ -185,6 +212,117 @@ resource "aws_apigatewayv2_route" "app_proxy" {
   target             = "integrations/${aws_apigatewayv2_integration.app_proxy.id}"
   authorization_type = "CUSTOM"
   authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
+# ---------------------------------------------------------------------------
+# Fase 4: um prefixo por microsservico (docs/fase-4/CONTRATOS.md §4). A rota mais
+# especifica vence: /api/billing/** e /api/execution/** nao caem no ANY /api/{proxy+} do
+# servico de OS. Cada servico tem as proprias rotas publicas dedicadas, pela mesma razao
+# das sondas e do login (adendo 7): sem Authorization, o gateway responderia 401 antes do
+# authorizer.
+# ---------------------------------------------------------------------------
+
+# Faturamento: tudo atras do authorizer, menos as sondas, a documentacao e os dois webhooks
+# (aprovacao, com X-Webhook-Token; Mercado Pago, com x-signature), que o proprio servico protege.
+resource "aws_apigatewayv2_route" "billing_proxy" {
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "ANY /api/billing/{proxy+}"
+  target             = "integrations/${aws_apigatewayv2_integration.billing_proxy.id}"
+  authorization_type = "CUSTOM"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
+resource "aws_apigatewayv2_route" "billing_health" {
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "GET /api/billing/health"
+  target             = "integrations/${aws_apigatewayv2_integration.billing_proxy.id}"
+  authorization_type = "NONE"
+}
+
+resource "aws_apigatewayv2_route" "billing_ready" {
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "GET /api/billing/ready"
+  target             = "integrations/${aws_apigatewayv2_integration.billing_proxy.id}"
+  authorization_type = "NONE"
+}
+
+resource "aws_apigatewayv2_route" "billing_approval_webhook" {
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "POST /api/billing/budgets/{id}/approval"
+  target             = "integrations/${aws_apigatewayv2_integration.billing_proxy.id}"
+  authorization_type = "NONE"
+}
+
+resource "aws_apigatewayv2_route" "billing_mercadopago_webhook" {
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "POST /api/billing/payments/webhook/mercadopago"
+  target             = "integrations/${aws_apigatewayv2_integration.billing_proxy.id}"
+  authorization_type = "NONE"
+}
+
+resource "aws_apigatewayv2_route" "billing_docs_index" {
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "GET /api/billing/docs"
+  target             = "integrations/${aws_apigatewayv2_integration.billing_proxy.id}"
+  authorization_type = "NONE"
+}
+
+resource "aws_apigatewayv2_route" "billing_docs" {
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "GET /api/billing/docs/{proxy+}"
+  target             = "integrations/${aws_apigatewayv2_integration.billing_proxy.id}"
+  authorization_type = "NONE"
+}
+
+resource "aws_apigatewayv2_route" "billing_openapi" {
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "GET /api/billing/swagger.yaml"
+  target             = "integrations/${aws_apigatewayv2_integration.billing_proxy.id}"
+  authorization_type = "NONE"
+}
+
+# Execucao: tudo atras do authorizer, menos as sondas e a documentacao.
+resource "aws_apigatewayv2_route" "execution_proxy" {
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "ANY /api/execution/{proxy+}"
+  target             = "integrations/${aws_apigatewayv2_integration.execution_proxy.id}"
+  authorization_type = "CUSTOM"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
+resource "aws_apigatewayv2_route" "execution_health" {
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "GET /api/execution/health"
+  target             = "integrations/${aws_apigatewayv2_integration.execution_proxy.id}"
+  authorization_type = "NONE"
+}
+
+resource "aws_apigatewayv2_route" "execution_ready" {
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "GET /api/execution/ready"
+  target             = "integrations/${aws_apigatewayv2_integration.execution_proxy.id}"
+  authorization_type = "NONE"
+}
+
+resource "aws_apigatewayv2_route" "execution_docs_index" {
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "GET /api/execution/docs"
+  target             = "integrations/${aws_apigatewayv2_integration.execution_proxy.id}"
+  authorization_type = "NONE"
+}
+
+resource "aws_apigatewayv2_route" "execution_docs" {
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "GET /api/execution/docs/{proxy+}"
+  target             = "integrations/${aws_apigatewayv2_integration.execution_proxy.id}"
+  authorization_type = "NONE"
+}
+
+resource "aws_apigatewayv2_route" "execution_openapi" {
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = "GET /api/execution/swagger.yaml"
+  target             = "integrations/${aws_apigatewayv2_integration.execution_proxy.id}"
+  authorization_type = "NONE"
 }
 
 # ---------------------------------------------------------------------------

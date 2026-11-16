@@ -37,6 +37,15 @@ só o `handler`. Quem emite e quem valida o token rodam o mesmo `JwtProvider`.
     `GET /api/ready`, `POST /api/auth/login`, `GET /docs`, `GET /docs/{proxy+}` e
     `GET /swagger.yaml` (as seis últimas vão para o NLB);
   - `ANY /api/{proxy+}` passa pelo `jwt-authorizer` e segue via VPC Link para o NLB.
+  - Fase 4 (`docs/fase-4/CONTRATOS.md` §4, no `oficina-api`): um prefixo por microsserviço, cada
+    um com integração e listener próprios no NLB (`:80` OS, `:81` Faturamento, `:82` Execução).
+    `ANY /api/billing/{proxy+}` e `ANY /api/execution/{proxy+}` passam pelo authorizer; as
+    rotas públicas de cada serviço (sondas, docs e os webhooks de aprovação e do Mercado Pago, no
+    Faturamento) têm rota dedicada. O SG do VPC Link sai nas portas 80 a 82.
+  - As rotas ficam escritas uma a uma, com `route_key` literal: o checker de contratos do
+    repositório principal lê o `apigateway.tf` como texto e confere cada rota contra o serviço
+    para onde a integração aponta. Rota gerada por `for_each` some para ele.
+  - `/internal/*` nunca entra no gateway (o checker acusa `ROTA-5`).
 - `newrelic-logs.tf`: logs vão para o New Relic por Kinesis Firehose, não pela extensão de
   Lambda, que falharia em silêncio na VPC sem NAT.
 - `ssm.tf`: publica `apigw/endpoint` e `apigw/api_id`.
