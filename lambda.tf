@@ -14,8 +14,36 @@ resource "aws_cloudwatch_log_group" "authorizer" {
 }
 
 # ---------------------------------------------------------------------------
-# auth-cpf — DENTRO da VPC, nas subnets privadas, com o SG cliente de banco.
+# auth-cpf — DENTRO da VPC, nas subnets privadas, com SG proprio: sai na 80 para o NLB
+# interno (rota interna do servico de OS) e na 443 para o endpoint do Secrets Manager.
+# Fase 4 (docs/fase-4/CONTRATOS.md §1 e §7, no oficina-api): nao usa mais o SG db-client.
 # ---------------------------------------------------------------------------
+
+resource "aws_security_group" "auth" {
+  name        = "${local.auth_function_name}-sg"
+  description = "Lambda auth-cpf: NLB interno (80) e endpoints da VPC (443)"
+  vpc_id      = nonsensitive(data.aws_ssm_parameter.vpc_id.value)
+
+  tags = { Name = "${local.auth_function_name}-sg" }
+}
+
+resource "aws_vpc_security_group_egress_rule" "auth_to_nlb" {
+  security_group_id = aws_security_group.auth.id
+  description       = "Servico de OS pelo NLB interno"
+  ip_protocol       = "tcp"
+  from_port         = 80
+  to_port           = 80
+  cidr_ipv4         = nonsensitive(data.aws_ssm_parameter.vpc_cidr.value)
+}
+
+resource "aws_vpc_security_group_egress_rule" "auth_to_endpoints" {
+  security_group_id = aws_security_group.auth.id
+  description       = "Endpoint do Secrets Manager"
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
+  cidr_ipv4         = nonsensitive(data.aws_ssm_parameter.vpc_cidr.value)
+}
 
 resource "aws_lambda_function" "auth" {
   function_name = local.auth_function_name
@@ -34,7 +62,7 @@ resource "aws_lambda_function" "auth" {
 
   vpc_config {
     subnet_ids         = local.private_subnet_ids
-    security_group_ids = [nonsensitive(data.aws_ssm_parameter.db_client_sg_id.value)]
+    security_group_ids = [aws_security_group.auth.id]
   }
 
   environment {
@@ -42,15 +70,19 @@ resource "aws_lambda_function" "auth" {
       {
         APP_ENV        = var.environment
         AUTH_SECRET_ID = local.auth_secret_arn
-        DB_SECRET_ID   = local.db_secret_arn
+        OS_BASE_URL    = local.os_base_url
       },
       local.newrelic_env
     )
   }
 
+  # As regras de saida antes da funcao: um SG novo nasce sem egress, e a Lambda sem elas
+  # responderia 503 (NLB) ou 500 (Secrets Manager) no smoke do deploy.
   depends_on = [
     aws_cloudwatch_log_group.auth,
     aws_iam_role_policy_attachment.auth_vpc_access,
+    aws_vpc_security_group_egress_rule.auth_to_nlb,
+    aws_vpc_security_group_egress_rule.auth_to_endpoints,
   ]
 }
 

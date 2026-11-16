@@ -173,7 +173,16 @@ final class AuthCpfHandlerTest extends TestCase
         self::assertSame(['error' => 'Cliente inativo. Procure a oficina.'], $this->body($response));
     }
 
-    public function testReturns500WhenTheDatabaseFails(): void
+    public function testReturns503WhenTheOsServiceIsDown(): void
+    {
+        $response = $this->handler((new FakeCustomerRepository())->unavailable())
+            ->handle($this->event(['cpf' => self::CPF]));
+
+        self::assertSame(503, $response['statusCode']);
+        self::assertSame(['error' => 'Serviço temporariamente indisponível. Tente novamente.'], $this->body($response));
+    }
+
+    public function testReturns500WhenTheLookupFails(): void
     {
         $response = $this->handler((new FakeCustomerRepository())->failing())
             ->handle($this->event(['cpf' => self::CPF]));
@@ -213,10 +222,10 @@ final class AuthCpfHandlerTest extends TestCase
     }
 
     /**
-     * Um CPF invalido nao pode chegar ao banco — validar antes economiza conexao e
+     * Um CPF invalido nao pode chegar ao servico de OS — validar antes economiza a chamada e
      * evita expor a consulta a entrada arbitraria.
      */
-    public function testDoesNotTouchTheDatabaseWhenCpfIsInvalid(): void
+    public function testDoesNotCallTheOsServiceWhenCpfIsInvalid(): void
     {
         $repository = (new FakeCustomerRepository())->failing();
 

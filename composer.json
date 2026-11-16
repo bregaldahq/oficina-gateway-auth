@@ -6,7 +6,6 @@
     "require": {
         "php": ">=8.2",
         "ext-json": "*",
-        "ext-pdo": "*",
         "bref/bref": "^2.0",
         "aws/aws-sdk-php": "^3.300"
     },

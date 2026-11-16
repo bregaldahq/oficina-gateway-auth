@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace Oficina\Auth\Repository;
 
 /**
- * Projecao minima da linha de `customers` — exatamente as colunas que a consulta
- * `SELECT id, name, status FROM customers WHERE document = ?` devolve.
+ * O mínimo do cliente que o token precisa, como a rota interna do serviço de OS devolve
+ * (`id`, `name`, `status`).
  */
 final class Customer
 {

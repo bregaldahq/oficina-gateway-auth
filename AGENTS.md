@@ -14,24 +14,28 @@ As duas Lambdas recebem o **mesmo zip** (`scripts/build-package.sh` → `build/l
 só o `handler`. Quem emite e quem valida o token rodam o mesmo `JwtProvider`.
 
 - `Handler/AuthCpfHandler.php`: `POST /auth/cpf`. Valida o CPF pelo dígito verificador antes de
-  tocar o banco, busca em `customers`, decide entre 200, 400, 403, 404 e 500 (tabela da seção 5)
-  e emite o JWT com `role=customer`.
+  consultar o cliente, decide entre 200, 400, 403, 404, 500 e 503 (tabela da seção 5 da Fase 3,
+  mais o 503 da Fase 4) e emite o JWT com `role=customer`.
 - `Handler/JwtAuthorizerHandler.php`: authorizer REQUEST com *simple response*. Valida
   assinatura e `exp` e devolve `context.customerId` e `context.role`.
 - `Security/JwtProvider.php`: monta o token **exatamente** como o `JwtProvider` da aplicação. O
   arquivo não é idêntico (namespace, comentários); o que precisa ser igual é o token.
 - `Secrets/SecretsManagerProvider.php`: guarda o segredo em cache estático entre invocações. Uma
   rotação só é percebida num container novo.
-- `Domain/Cpf.php` replica o value object `Document` da aplicação, e
-  `Repository/PdoCustomerRepository.php` faz o acesso ao banco.
+- `Domain/Cpf.php` replica o value object `Document` da aplicação.
+- `Repository/HttpCustomerRepository.php` (Fase 4, `docs/fase-4/CONTRATOS.md` §7 no
+  `oficina-api`): `GET /internal/customers/by-document/{cpf}` no serviço de OS, pelo NLB
+  interno (`OS_BASE_URL`), com o `INTERNAL_TOKEN` do segredo de auth. Sem resposta ou 5xx vira
+  `OsUnavailableException` (503); 401 ou corpo fora do contrato é defeito de configuração (500).
+  A Lambda **não lê mais o banco**: não use PDO aqui.
 - `handler-auth.php` e `handler-authorizer.php` só montam as dependências. Os handlers são
   classes puras, que recebem um array e devolvem um array, testáveis sem AWS.
 
 ## Infra (`*.tf`)
 
-- `lambda.tf`: a `auth-cpf` roda **dentro** da VPC (subnets privadas + SG crachá) porque fala
-  com o RDS. O `jwt-authorizer` roda **fora** da VPC, sem ENI e sem cold start extra.
-- `iam.tf`: um role por função. O authorizer não recebe acesso ao segredo de banco.
+- `lambda.tf`: a `auth-cpf` roda **dentro** da VPC (subnets privadas) com SG próprio, que sai
+  na 80 para o NLB interno e na 443 para o endpoint do Secrets Manager. O `jwt-authorizer` roda **fora** da VPC, sem ENI e sem cold start extra.
+- `iam.tf`: um role por função. Nenhuma das duas lê o segredo de banco.
 - `apigateway.tf`:
   - rotas dedicadas sem authorizer: `POST /auth/cpf` (Lambda), `GET /api/health`,
     `GET /api/ready`, `POST /api/auth/login`, `GET /docs`, `GET /docs/{proxy+}` e
@@ -61,8 +65,9 @@ só o `handler`. Quem emite e quem valida o token rodam o mesmo `JwtProvider`.
   lista `PUBLIC_ROUTES` do authorizer não basta.
 - **Consome** (`data.tf`):
   - da fundação: `network/vpc_id`, `network/private_subnet_ids`, `network/vpc_cidr`,
-    `db/client_sg_id`, `db/secret_arn` e `auth/secret_arn`;
-  - do cluster: `nlb/listener_arn`.
+    e `auth/secret_arn`;
+  - do cluster: `nlb/listener_arn`, `nlb/faturamento/listener_arn`, `nlb/execucao/listener_arn`
+    e `nlb/dns_name`.
 - **Publica:** `apigw/endpoint` e `apigw/api_id`.
 
 ## Validar
@@ -84,7 +89,10 @@ New Relic) em `envs/*.tfvars` envelhecem: confira a versão antes de mudar.
 | Token da Lambda recusado pela app (401) | `JwtProvider` mudou de um lado só (claims, ordem, base64url) | Testes de contrato dos dois repos e `bin/check-contracts.py` (JWT-1/2) |
 | Rota pública responde 401 pelo gateway | Falta rota dedicada sem authorizer | `bin/check-contracts.py` (ROTA-1) |
 | `auth-cpf` trava até o timeout | Serviço AWS novo chamado sem endpoint na VPC sem NAT | Revisão; endpoint vai no `vpc_endpoints.tf` da fundação |
+| `POST /auth/cpf` responde 503 | OS fora do ar, ou SG da Lambda sem saída na 80 | `HttpCustomerRepositoryTest` e o smoke do `deploy.yml` |
+| `POST /auth/cpf` responde 500 com o OS no ar | `INTERNAL_TOKEN` diferente entre a Lambda e o OS (cache de segredo antigo) | log `auth.cpf.failed` com `exception_message` 401 |
 | Lambda lê chave de segredo que não existe | Chave renomeada no `secrets.tf` da fundação | `bin/check-contracts.py` (SEG-1) |
+| `destroy` do gateway parado 20 a 40 min no SG da `auth-cpf` | A ENI da Lambda em VPC demora a ser liberada pela AWS | Esperar; não apague o SG à mão |
 | O state "some" | A chave do state foi trocada para o nome novo | `bin/check-contracts.py` (NOME-1); continua `oficina-lambda-auth` |
 
 ## Convenções
