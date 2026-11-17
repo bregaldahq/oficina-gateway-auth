@@ -27,6 +27,12 @@ data "aws_ssm_parameter" "auth_secret_arn" {
 
 # Listener :80 do NLB interno publicado pelo repo de k8s — alvo da integracao
 # HTTP_PROXY via VPC Link.
+# Fase 4 (docs/fase-4/CONTRATOS.md §2 e §4, no oficina-api): um listener por microsserviço.
+data "aws_ssm_parameter" "nlb_service_listener_arn" {
+  for_each = toset(["faturamento", "execucao"])
+  name     = "/oficina/${var.environment}/nlb/${each.key}/listener_arn"
+}
+
 data "aws_ssm_parameter" "nlb_listener_arn" {
   name = "/oficina/${var.environment}/nlb/listener_arn"
 }
