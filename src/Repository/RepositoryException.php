@@ -6,6 +6,6 @@ namespace Oficina\Auth\Repository;
 
 use RuntimeException;
 
-final class RepositoryException extends RuntimeException
+class RepositoryException extends RuntimeException
 {
 }

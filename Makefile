@@ -1,13 +1,18 @@
 .PHONY: install test stan package fmt validate
 
+# Sem PHP ou Composer na máquina, roda em container: o mesmo PHP 8.2 do CI.
+DOCKER   := docker run --rm -u $(shell id -u):$(shell id -g) -e HOME=/tmp -v $(CURDIR):/app -w /app
+PHP      := $(if $(shell command -v php),php,$(DOCKER) php:8.2-cli php)
+COMPOSER := $(if $(shell command -v composer),composer,$(DOCKER) composer:2.7)
+
 install:
-	composer install
+	$(COMPOSER) install
 
 test:
-	vendor/bin/phpunit
+	$(PHP) vendor/bin/phpunit
 
 stan:
-	vendor/bin/phpstan analyse --no-progress
+	$(PHP) vendor/bin/phpstan analyse --no-progress
 
 package:
 	./scripts/build-package.sh

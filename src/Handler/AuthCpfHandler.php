@@ -7,6 +7,7 @@ namespace Oficina\Auth\Handler;
 use Oficina\Auth\Domain\Cpf;
 use Oficina\Auth\Domain\InvalidCpfException;
 use Oficina\Auth\Repository\CustomerRepositoryInterface;
+use Oficina\Auth\Repository\OsUnavailableException;
 use Oficina\Auth\Secrets\SecretsProviderInterface;
 use Oficina\Auth\Security\JwtProvider;
 use Throwable;
@@ -56,7 +57,14 @@ final class AuthCpfHandler
                 return self::error(400, 'CPF inválido.');
             }
 
-            $customer = $this->customers->findByDocument($cpf->getValue());
+            try {
+                $customer = $this->customers->findByDocument($cpf->getValue());
+            } catch (OsUnavailableException $e) {
+                // Fase 4: o cliente vem do serviço de OS; fora do ar, o cliente tenta de novo.
+                self::logError($e);
+
+                return self::error(503, 'Serviço temporariamente indisponível. Tente novamente.');
+            }
 
             if ($customer === null) {
                 return self::error(404, 'Cliente não encontrado.');
@@ -155,10 +163,8 @@ final class AuthCpfHandler
 
     private static function logError(Throwable $e): void
     {
-        // The repository wraps PDOException in a RepositoryException with a friendly
-        // message. Logging only the top-level message throws away the ONLY thing that
-        // tells "table does not exist" apart from "access denied" or "connection
-        // refused" — all of which surface identically as "Falha ao consultar o cliente".
+        // O repositório embrulha a falha de rede numa exceção com mensagem amigável: sem a
+        // causa no log, "conexão recusada" e "tempo esgotado" ficariam iguais.
         $cause = $e->getPrevious();
 
         $line = json_encode([
