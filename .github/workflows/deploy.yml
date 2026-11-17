@@ -32,7 +32,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
-          extensions: json, pdo, pdo_mysql
+          extensions: json
           coverage: none
 
       - name: Instalar dependências (com dev, para os testes)
@@ -85,8 +85,8 @@ jobs:
         run: |
           API="$(terraform output -raw api_endpoint)"
           echo "API: $API"
-          # CPF sintético inexistente: esperamos 404 (a rota responde e o banco foi
-          # alcançado). Qualquer 5xx aqui reprova o deploy.
+          # CPF sintético inexistente: esperamos 404 (a rota responde e o serviço de OS foi
+          # alcançado pelo NLB interno). Qualquer 5xx aqui reprova o deploy.
           STATUS="$(curl -s -o /tmp/out.json -w '%{http_code}' \
             -X POST "$API/auth/cpf" \
             -H 'Content-Type: application/json' \

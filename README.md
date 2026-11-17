@@ -30,7 +30,7 @@ sequenceDiagram
     participant GW as API Gateway<br/>HTTP API
     participant L as Lambda auth-cpf<br/>(na VPC)
     participant SM as Secrets Manager
-    participant DB as RDS MySQL
+    participant DB as Serviço de OS<br/>(NLB interno :80)
     participant AZ as Lambda jwt-authorizer<br/>(fora da VPC)
     participant VL as VPC Link + NLB
     participant API as Aplicação (EKS)
@@ -45,8 +45,10 @@ sequenceDiagram
     else CPF inválido ou CNPJ
         L-->>C: 400 {"error":"CPF inválido."}
     else CPF válido
-        L->>DB: SELECT id, name, status FROM customers WHERE document = ?
-        alt sem linha
+        L->>DB: GET /internal/customers/by-document/{cpf}<br/>X-Internal-Token
+        alt OS fora do ar (sem resposta ou 5xx)
+            L-->>C: 503 {"error":"Serviço temporariamente indisponível. Tente novamente."}
+        else 404
             L-->>C: 404 {"error":"Cliente não encontrado."}
         else status INACTIVE ou BLOCKED
             L-->>C: 403 {"error":"Cliente inativo. Procure a oficina."}
@@ -126,7 +128,7 @@ src/
   Domain/Cpf.php                     validação de CPF (réplica do Document VO da aplicação)
   Security/JwtProvider.php           cópia byte a byte do JwtProvider da aplicação
   Secrets/SecretsManagerProvider.php Secrets Manager com cache estático entre invocações
-  Repository/PdoCustomerRepository.php  SELECT id, name, status FROM customers
+  Repository/HttpCustomerRepository.php GET /internal/customers/by-document/{cpf} no serviço de OS
   Handler/AuthCpfHandler.php         regra da rota POST /auth/cpf
   Handler/JwtAuthorizerHandler.php   regra do authorizer
 handler-auth.php                     amarração fina com o Bref (auth-cpf)
@@ -141,7 +143,7 @@ envs/{hml,prod}.tfvars               parâmetros por ambiente
 e devolvem um array (a resposta), com todas as dependências injetadas por construtor.
 Os arquivos `handler-*.php` apenas montam as dependências reais e delegam.
 
-Isso torna toda a tabela de erros testável ramo a ramo sem AWS, sem banco e sem o
+Isso torna toda a tabela de erros testável ramo a ramo sem AWS, sem o serviço de OS e sem o
 runtime do Bref instalado — e permite que o `phpunit` rode em qualquer máquina.
 
 ### Cache de segredos
@@ -169,12 +171,13 @@ Requisição: `{"cpf": "52998224725"}` (aceita com ou sem máscara).
 | Campo `cpf` ausente ou vazio | 400 | `{"error":"O campo cpf é obrigatório."}` |
 | CPF não cadastrado | 404 | `{"error":"Cliente não encontrado."}` |
 | Cliente `INACTIVE` ou `BLOCKED` | 403 | `{"error":"Cliente inativo. Procure a oficina."}` |
-| Falha de banco / erro interno | 500 | `{"error":"Erro interno."}` |
+| Serviço de OS fora do ar (sem resposta ou 5xx) | 503 | `{"error":"Serviço temporariamente indisponível. Tente novamente."}` |
+| Erro interno (segredo ilegível, token interno recusado, resposta fora do contrato) | 500 | `{"error":"Erro interno."}` |
 
 Só CPF (11 dígitos) é aceito. CNPJ — mesmo com dígitos verificadores válidos — retorna 400.
 
-Um CPF sintaticamente inválido **nunca chega ao banco**: a validação acontece antes,
-economizando conexão e reduzindo a superfície exposta a entrada arbitrária.
+Um CPF sintaticamente inválido **nunca chega ao serviço de OS**: a validação acontece antes,
+economizando a chamada e reduzindo a superfície exposta a entrada arbitrária.
 
 ### Authorizer
 
@@ -193,7 +196,7 @@ id de cliente). A aplicação **não confia** nesse contexto: ela revalida o JWT
 
 | Função | Rede | Motivo |
 |---|---|---|
-| `auth-cpf` | **dentro** da VPC, subnets privadas, SG cliente de banco lido do SSM | precisa alcançar o RDS |
+| `auth-cpf` | **dentro** da VPC, subnets privadas, SG próprio (sai na 80 para o NLB e na 443 para o endpoint do Secrets Manager) | chama a rota interna do serviço de OS pelo NLB interno (Fase 4; antes lia o RDS) |
 | `jwt-authorizer` | **fora** da VPC | só valida assinatura; ficar fora evita ENI e cold start extra no caminho de **toda** requisição |
 
 O VPC Link usa **as mesmas subnets privadas** em que o NLB interno foi criado pelo repo
@@ -203,7 +206,8 @@ de Kubernetes (`/oficina/<env>/network/private_subnet_ids`), e a integração
 ### Parâmetros SSM consumidos
 
 `/oficina/<env>/network/vpc_id`, `/network/private_subnet_ids`, `/network/vpc_cidr`,
-`/db/client_sg_id`, `/db/secret_arn`, `/auth/secret_arn`, `/nlb/listener_arn`.
+`/auth/secret_arn`, `/nlb/listener_arn`, `/nlb/dns_name`, `/nlb/faturamento/listener_arn`,
+`/nlb/execucao/listener_arn`.
 
 ### Parâmetros SSM publicados
 
@@ -217,11 +221,11 @@ de Kubernetes (`/oficina/<env>/network/private_subnet_ids`), e a integração
 |---|:--:|:--:|
 | `logs:CreateLogStream` / `PutLogEvents` no **próprio** log group | ✅ | ✅ |
 | `secretsmanager:GetSecretValue` no segredo de **auth** | ✅ | ✅ |
-| `secretsmanager:GetSecretValue` no segredo de **banco** | ✅ | ❌ |
 | `AWSLambdaVPCAccessExecutionRole` | ✅ | ❌ |
 
-Roles separadas de propósito: o authorizer nunca fala com o RDS, então não recebe nem a
-credencial do banco nem a permissão de manipular ENIs.
+Roles separadas de propósito: só a `auth-cpf` entra na VPC e recebe a permissão de manipular
+ENIs. Desde a Fase 4 nenhuma das duas recebe a credencial do banco do OS: a `auth-cpf` consulta
+o cliente pela rota interna, com o `INTERNAL_TOKEN` do segredo de auth.
 
 ---
 

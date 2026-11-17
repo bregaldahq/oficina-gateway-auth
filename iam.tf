@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------------------
-# IAM minimo por funcao. Duas roles distintas de proposito: o authorizer roda
-# fora da VPC e nao pode ler o segredo de banco.
+# IAM minimo por funcao. Duas roles distintas de proposito: so' a auth-cpf entra na VPC.
+# Fase 4: nenhuma das duas le o segredo de banco.
 # ---------------------------------------------------------------------------
 
 data "aws_iam_policy_document" "lambda_assume_role" {
@@ -34,10 +34,10 @@ data "aws_iam_policy_document" "auth" {
   }
 
   statement {
-    sid       = "ReadAuthAndDbSecrets"
+    sid       = "ReadAuthSecret"
     effect    = "Allow"
     actions   = ["secretsmanager:GetSecretValue"]
-    resources = compact([local.auth_secret_arn, local.db_secret_arn, var.newrelic_license_key_secret_id])
+    resources = compact([local.auth_secret_arn, var.newrelic_license_key_secret_id])
   }
 }
 

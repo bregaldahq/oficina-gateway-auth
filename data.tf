@@ -11,14 +11,10 @@ data "aws_ssm_parameter" "private_subnet_ids" {
   name = "/oficina/${var.environment}/network/private_subnet_ids"
 }
 
-# SG que concede acesso ao RDS:3306. Criado pelo repo de banco e anexado aqui
-# na Lambda auth-cpf — que e' a unica das duas que entra na VPC.
-data "aws_ssm_parameter" "db_client_sg_id" {
-  name = "/oficina/${var.environment}/db/client_sg_id"
-}
-
-data "aws_ssm_parameter" "db_secret_arn" {
-  name = "/oficina/${var.environment}/db/secret_arn"
+# Fase 4 (docs/fase-4/CONTRATOS.md §7, no oficina-api): a auth-cpf chama a rota interna do
+# servico de OS pelo NLB interno, e nao le mais o banco (nem o segredo nem o SG db-client).
+data "aws_ssm_parameter" "nlb_dns_name" {
+  name = "/oficina/${var.environment}/nlb/dns_name"
 }
 
 data "aws_ssm_parameter" "auth_secret_arn" {

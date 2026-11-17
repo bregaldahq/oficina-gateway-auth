@@ -17,8 +17,10 @@ locals {
 
   private_subnet_ids = split(",", nonsensitive(data.aws_ssm_parameter.private_subnet_ids.value))
 
-  db_secret_arn   = nonsensitive(data.aws_ssm_parameter.db_secret_arn.value)
   auth_secret_arn = nonsensitive(data.aws_ssm_parameter.auth_secret_arn.value)
+
+  # O servico de OS e' o listener :80 do NLB interno.
+  os_base_url = "http://${nonsensitive(data.aws_ssm_parameter.nlb_dns_name.value)}"
 
   # Layers extras (New Relic) aplicados as duas funcoes quando habilitado.
   extra_layers = var.newrelic_enabled ? [var.newrelic_layer_arn] : []
